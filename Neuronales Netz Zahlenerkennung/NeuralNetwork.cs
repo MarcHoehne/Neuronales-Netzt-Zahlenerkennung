@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -10,139 +11,160 @@ namespace Neuronales_Netz_Zahlenerkennung
 {
     public class NeuralNetwork
     {
-        private List<Layer> layers = new List<Layer>();
-        private const int InputSize = 14 * 14;
-        private BatchHelper batchHelper;
+        private readonly List<Layer> layers = new List<Layer>();
+        private BatchHelper _batchHelper;
 
-        public NeuralNetwork(BatchHelper batchHelper)
+        public void Initialize(BatchHelper batchHelper)
         {
-            this.batchHelper = batchHelper;
+            _batchHelper = batchHelper ?? throw new ArgumentNullException(nameof(batchHelper));
         }
+
+        public double CrossEntropyLoss(double[] predicted, int label)
+        {
+            const double epsilon = 1e-10; // Schutz vor Log(0)
+            return -Math.Log(predicted[label] + epsilon);
+        }
+
+        public void Backpropagate(double[] input, double[] target, double learningRate)
+        {
+            double[] error = null;
+
+            // Rückwärts durch die Layers
+            for (int i = layers.Count - 1; i >= 0; i--)
+            {
+                var layer = layers[i];
+
+                if (i == layers.Count - 1) // Ausgabe-Layer
+                {
+                    // Fehler berechnen (target - output)
+                    error = target.Zip(layer.Output, (t, o) => t - o).ToArray();
+                }
+                else
+                {
+                    // Fehler zurückpropagieren
+                    error = layers[i + 1].Backward(error, layer.Weights);
+                }
+
+                // Gewichte aktualisieren
+                layer.UpdateWeights(learningRate, error);
+            }
+        }
+
 
         public void AddLayer(int inputSize, int outputSize)
         {
             layers.Add(new Layer(inputSize, outputSize));
         }
 
-        public double[] Predict(double[] output)
+        public double[] Predict(double[] input)
         {
+            return layers.Aggregate(input, (current, layer) => layer.Forward(current));
+        }
+
+        public double Evaluate(byte[][,] images, byte[] labels)
+        {
+            int correct = 0;
+
+            for (int i = 0; i < images.Length; i++)
+            {
+                var input = BatchHelper.NormalizeImage(images[i]);
+                var output = Predict(input);
+                int predicted = Array.IndexOf(output, output.Max());
+
+                if (predicted == labels[i])
+                    correct++;
+            }
+
+            return (double)correct / images.Length * 100;
+        }
+
+        public void SaveWeights(string filename)
+        {
+            using (StreamWriter writer = new StreamWriter(filename))
+            {
+                foreach (var layer in layers)
+                {
+                    for (int i = 0; i < layer.Weights.GetLength(0); i++)
+                    {
+                        for (int j = 0; j < layer.Weights.GetLength(1); j++)
+                        {
+                            writer.WriteLine(layer.Weights[i, j]);
+                        }
+                    }
+                }
+            }
+        }
+
+        public void LoadWeights(string filename)
+        {
+            if (!File.Exists(filename))
+            {
+                throw new FileNotFoundException($"Could not find weights file: {filename}");
+            }
+
+            string[] lines = File.ReadAllLines(filename);
+            int lineIndex = 0;
+
             foreach (var layer in layers)
             {
-                output = layer.Forward(output);
+                for (int i = 0; i < layer.Weights.GetLength(0); i++)
+                {
+                    for (int j = 0; j < layer.Weights.GetLength(1); j++)
+                    {
+                        if (lineIndex >= lines.Length)
+                        {
+                            throw new Exception("Not enough weights in file");
+                        }
+
+                        layer.Weights[i, j] = double.Parse(lines[lineIndex]);
+                        lineIndex++;
+                    }
+                }
             }
-            return output;
         }
 
         public void Train(byte[][,] images, byte[] labels, int epochs, double learningRate, int batchSize, int logFrequency)
         {
             int totalBatches = (int)Math.Ceiling((double)images.Length / batchSize);
+            int imageCounter = 0; 
 
-            for (int epoch = 0; epoch < epochs; epoch++)
+            for (int epoch = 1; epoch <= epochs; epoch++)
             {
-                Console.WriteLine($"Epoch {epoch + 1}/{epochs}");
-                //(byte[][,] shuffledImages, byte[] shuffledLabels) = ShuffleData(images, labels);
-
+                Console.WriteLine($"Epoch {epoch}/{epochs}");
                 double epochLoss = 0;
+
+                Stopwatch stopwatch = Stopwatch.StartNew();
+
+                int processorCount = Environment.ProcessorCount;
+                int maxDegreeOfParallelism = Math.Max(1, processorCount - 2);
+                ParallelOptions parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism };
+
+
                 for (int batch = 0; batch < totalBatches; batch++)
                 {
-                    int batchStart = batch * batchSize;
-                    int batchEnd = Math.Min(batchStart + batchSize, images.Length);
-                    var (batchImages, batchLabels) = batchHelper.GetBatch(images, labels, batchStart, batchEnd);
+                    int start = batch * batchSize;
+                    int end = Math.Min(start + batchSize, images.Length);
 
-                    double batchLoss = batchHelper.ProcessBatch(batchImages, batchLabels, learningRate);
-                    epochLoss += batchLoss;
+                    var (batchImages, batchLabels) = _batchHelper.GetBatch(images, labels, start, end);
 
-                    if ((batch + 1) % logFrequency == 0)
+                    for (int i = 0; i < batchImages.Length; i++)
                     {
-                        Console.WriteLine($"  Batch {batch + 1}/{totalBatches} - Durchschnittlicher Loss: {batchLoss / batchSize:F4}");
-                    }
+                        var input = BatchHelper.NormalizeImage(batchImages[i]);
+                        var target = new double[10];
+                        target[batchLabels[i]] = 1; // One-hot-Encoding für Labels
+
+                        var output = Predict(input);
+                        epochLoss += CrossEntropyLoss(output, batchLabels[i]);
+
+                        Backpropagate(input, target, learningRate);
+
+                        imageCounter++; // Increment the counter
+                    }                
                 }
+                stopwatch.Stop(); // Stop the stopwatch
 
-                Console.WriteLine($"Epoch {epoch + 1} - Gesamtdurchschnittlicher Loss: {epochLoss / images.Length:F4}");
-            }
-        }
-
-
-        private (byte[][,] Images, byte[] Labels) ShuffleData(byte[][,] images, byte[] labels)
-        {
-            Random rng = new Random();
-            int n = images.Length;
-            for (int i = n - 1; i > 0; i--)
-            {
-                int j = rng.Next(i + 1);
-                (images[i], images[j]) = (images[j], images[i]);
-                (labels[i], labels[j]) = (labels[j], labels[i]);
-            }
-            return (images, labels);
-        }
-
-
-        public double CrossEntropyLoss(double[] predicted, byte label)
-        {
-            // Überprüfen, ob der Index innerhalb des Label Bereichs ist
-            if (label < 0 || label >= predicted.Length)
-            {
-                Console.WriteLine($"Warnung: Ungültiges Label {label}. Es sollte im Bereich von 0 bis {predicted.Length - 1} liegen.");
-                return 0;  
-            }
-            // Epsilon für sehr kleine Werte um probleme mit Null zu verhindern!
-            double epsilon = 1e-15;
-            return -Math.Log(Math.Max(predicted[label], epsilon));
-        }
-
-        public void Backward(double[] input, byte label, double learningRate)
-        {
-            // Berechne die Ausgabe der Vorwärtspropagation
-            double[] output = Predict(input);
-
-            // Fehler für die Ausgangsschicht berechnen (Delta)
-            if (label < 0 || label >= output.Length)
-            {
-                Console.WriteLine($"Warnung: Ungültiges Label {label} in Backward().");
-                return;  
-            }
-
-            double[] delta = new double[output.Length];
-            for (int j = 0; j < output.Length; j++)
-            {
-                delta[j] = output[j] - (j == label ? 1 : 0);  // Cross-Entropy-Loss für die Ausgangsschicht
-            }
-
-            // Gehe rückwärts durch alle Schichten
-            for (int layerIndex = layers.Count - 1; layerIndex >= 0; layerIndex--)
-            {
-                var layer = layers[layerIndex];
-
-                // Berechne den Fehler für die vorherige Schicht (Delta für die vorherige Schicht)
-                double[] previousDelta = new double[layer.InputSize];
-
-                for (int j = 0; j < layer.Biases.Length; j++)
-                {
-                    for (int i = 0; i < layer.InputSize; i++)
-                    {
-                        // Überprüfe, ob Indizes gültig sind
-                        if (i >= layer.InputSize || j >= layer.Biases.Length)
-                        {
-                            Console.WriteLine($"Warnung: Ungültiger Index (i={i}, j={j}) in Backward().");
-                            continue;  // Verhindere IndexOutOfRange
-                        }
-
-                        previousDelta[i] += delta[j] * layer.Weights[i, j];
-                        // Update der Gewichte
-                        if (i < layer.Weights.GetLength(0) && j < layer.Weights.GetLength(1))
-                        {
-                            layer.Weights[i, j] -= learningRate * delta[j] * (layerIndex == layers.Count - 1 ? input[i] : layers[layerIndex].Output[i]);
-                        }
-                    }
-                    // Update der Biases
-                    if (j < layer.Biases.Length)
-                    {
-                        layer.Biases[j] -= learningRate * delta[j];
-                    }
-                }
-
-                // Weitergabe des Fehlerdelta an die vorherige Schicht
-                delta = previousDelta;
+                Console.WriteLine($"Epoch {epoch} Complete - Avg Loss: {epochLoss / images.Length:F4} - Time: {stopwatch.Elapsed.TotalSeconds} seconds");
+                Console.WriteLine($"Total images processed: {imageCounter}");
             }
         }
 

@@ -9,17 +9,15 @@ namespace Neuronales_Netz_Zahlenerkennung
 {
     public class Layer
     {
-        RechenMethoden rechenmethoden = new RechenMethoden();
+        private readonly RechenMethoden rechenmethoden = new RechenMethoden();
 
-        // Felder für InputSize und OutputSize
         private int inputSize;
         private int outputSize;
 
-        public int InputSize => inputSize; // Getter für inputSize
-        public double[] Output { get; private set; } // Getter und Setter für Output
-
-        public double[,] Weights { get; private set; }
-        public double[] Biases { get; private set; }
+        public double[] Input { get; private set; } // Speichert die Eingabe der Forward-Methode
+        public double[] Output { get; private set; } // Ausgabe nach Forward-Pass
+        public double[,] Weights { get; private set; } // Gewichtsmatrix
+        public double[] Biases { get; private set; } // Biases
 
         public Layer(int inputSize, int outputSize)
         {
@@ -51,29 +49,59 @@ namespace Neuronales_Netz_Zahlenerkennung
 
         public double[] Forward(double[] input)
         {
-            // Dimensionscheck
             if (input.Length != inputSize)
-            {
-                throw new ArgumentException($"Ungültige Eingabedimension. Erwartet: {inputSize}, erhalten: {input.Length}");
-            }
+                throw new ArgumentException($"Expected input size: {inputSize}, got: {input.Length}");
 
-            double[] output = new double[outputSize];
+            Input = input; // Speichert die Eingabe für Backpropagation
+            Output = new double[outputSize];
 
             for (int j = 0; j < outputSize; j++)
             {
                 double sum = 0.0;
-
                 for (int i = 0; i < inputSize; i++)
                 {
                     sum += input[i] * Weights[i, j];
                 }
-
                 sum += Biases[j];
-                output[j] = rechenmethoden.Sigmoid(sum); // Sigmoid-Aktivierungsfunktion
+                Output[j] = rechenmethoden.Sigmoid(sum); // Aktivierungsfunktion
             }
 
-            this.Output = output; // Ausgabe speichern
-            return output;
+            return Output;
+        }
+
+        public double[] Backward(double[] error, double[,] weights)
+        {
+            // Fehler für die vorherige Schicht berechnen
+            double[] prevError = new double[inputSize];
+            double[,] gradients = new double[inputSize, outputSize];
+
+            for (int i = 0; i < inputSize; i++)
+            {
+                for (int j = 0; j < outputSize; j++)
+                {
+                    gradients[i, j] = error[j] * Output[j] * (1 - Output[j]); // Ableitung der Sigmoid-Funktion
+                    prevError[i] += gradients[i, j] * weights[i, j]; // Fehler für die Eingabe
+                }
+            }
+
+            return prevError;
+        }
+
+        public void UpdateWeights(double learningRate, double[] error)
+        {
+            for (int i = 0; i < inputSize; i++)
+            {
+                for (int j = 0; j < outputSize; j++)
+                {
+                    double gradient = error[j] * Output[j] * (1 - Output[j]); // Gradientenberechnung
+                    Weights[i, j] += learningRate * gradient * Input[i]; // Gewichte aktualisieren
+                }
+            }
+
+            for (int j = 0; j < outputSize; j++)
+            {
+                Biases[j] += learningRate * error[j]; // Biases aktualisieren
+            }
         }
     }
 }
