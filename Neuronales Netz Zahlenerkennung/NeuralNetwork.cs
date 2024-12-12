@@ -84,6 +84,7 @@ namespace Neuronales_Netz_Zahlenerkennung
             {
                 foreach (var layer in layers)
                 {
+                    // Speichern der Gewichtsmatrix
                     for (int i = 0; i < layer.Weights.GetLength(0); i++)
                     {
                         for (int j = 0; j < layer.Weights.GetLength(1); j++)
@@ -91,8 +92,16 @@ namespace Neuronales_Netz_Zahlenerkennung
                             writer.WriteLine(layer.Weights[i, j]);
                         }
                     }
+
+                    // Speichern der Bias-Werte
+                    for (int j = 0; j < layer.Biases.Length; j++)
+                    {
+                        writer.WriteLine(layer.Biases[j]);
+                    }
                 }
             }
+
+            Console.WriteLine("Weights saved to file.");
         }
 
         public void LoadWeights(string filename)
@@ -107,6 +116,7 @@ namespace Neuronales_Netz_Zahlenerkennung
 
             foreach (var layer in layers)
             {
+                // Laden der Gewichtsmatrix
                 for (int i = 0; i < layer.Weights.GetLength(0); i++)
                 {
                     for (int j = 0; j < layer.Weights.GetLength(1); j++)
@@ -120,7 +130,55 @@ namespace Neuronales_Netz_Zahlenerkennung
                         lineIndex++;
                     }
                 }
+
+                // Laden der Bias-Werte
+                for (int j = 0; j < layer.Biases.Length; j++)
+                {
+                    if (lineIndex >= lines.Length)
+                    {
+                        throw new Exception("Not enough bias values in file");
+                    }
+
+                    layer.Biases[j] = double.Parse(lines[lineIndex]);
+                    lineIndex++;
+                }
             }
+
+            Console.WriteLine("Weights loaded from file.");
+        }
+
+        public void CompareWeights(int layerIndex, string weightsFile)
+        {
+            // Originalgewichte abrufen
+            double[,] originalWeights = GetLayerWeights(layerIndex);
+
+            // Gewichte laden
+            LoadWeights(weightsFile);
+
+            // Geladene Gewichte abrufen
+            double[,] loadedWeights = GetLayerWeights(layerIndex);
+
+            // Vergleich der Gewichte
+            for (int i = 0; i < originalWeights.GetLength(0); i++)
+            {
+                for (int j = 0; j < originalWeights.GetLength(1); j++)
+                {
+                    if (originalWeights[i, j] != loadedWeights[i, j])
+                    {
+                        Console.WriteLine("Mismatch at weight position: ({0}, {1})", i, j);
+                    }
+                }
+            }
+        }
+
+        public double[,] GetLayerWeights(int layerIndex)
+        {
+            if (layerIndex < 0 || layerIndex >= layers.Count)
+            {
+                throw new ArgumentOutOfRangeException($"Layer index {layerIndex} is out of range.");
+            }
+
+            return layers[layerIndex].Weights;
         }
 
         public void Train(byte[][,] images, byte[] labels, int epochs, double learningRate, int batchSize, int logFrequency)
