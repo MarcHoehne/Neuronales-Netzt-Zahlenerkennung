@@ -27,29 +27,52 @@ namespace Neuronales_Netz_Zahlenerkennung
 
         public void Backpropagate(double[] input, double[] target, double learningRate)
         {
+            // Forward pass speichern
+            var layerOutputs = new List<double[]>();
+            var currentInput = input;
+
+            foreach (var layer in layers)
+            {
+                currentInput = layer.Forward(currentInput);
+                layerOutputs.Add(currentInput);
+            }
+
+            // Backpropagation
             double[] error = null;
 
-            // Rückwärts durch die Layers
             for (int i = layers.Count - 1; i >= 0; i--)
             {
-                var layer = layers[i];
-
-                if (i == layers.Count - 1) // Ausgabe-Layer
+                if (i == layers.Count - 1)
                 {
-                    // Fehler berechnen (target - output)
-                    error = target.Zip(layer.Output, (t, o) => t - o).ToArray();
+                    error = new double[layers[i].Output.Length];
+                    for (int j = 0; j < error.Length; j++)
+                    {
+                        error[j] = layers[i].Output[j] - target[j];
+                    }
                 }
                 else
                 {
-                    // Fehler zurückpropagieren
-                    error = layers[i + 1].Backward(error, layer.Weights);
-                }
+                    // Hidden Layers: Propagiere Error zurück
+                    var nextLayer = layers[i + 1];
+                    error = new double[layers[i].Output.Length];
 
-                // Gewichte aktualisieren
-                layer.UpdateWeights(learningRate, error);
+                    for (int j = 0; j < error.Length; j++)
+                    {
+                        double sum = 0;
+                        for (int k = 0; k < nextLayer.Output.Length; k++)
+                        {
+                            sum += nextLayer.Weights[j, k] * nextLayer.Delta[k];
+                        }
+                        error[j] = sum;
+                    }
+                }
+                // Berechne Delta für aktuelle Layer
+                layers[i].ComputeDelta(error);
+
+                // Update Weights und Biases - Fixed method call
+                layers[i].UpdateWeights(learningRate);
             }
         }
-
 
         public void AddLayer(int inputSize, int outputSize)
         {
@@ -181,50 +204,116 @@ namespace Neuronales_Netz_Zahlenerkennung
             return layers[layerIndex].Weights;
         }
 
+        public (double Loss, double Accuracy) EvaluateBatch(byte[][,] images, byte[] labels)
+        {
+            int correct = 0;
+            double totalLoss = 0;
+
+            for (int i = 0; i < images.Length; i++)
+            {
+                var input = BatchHelper.NormalizeImage(images[i]);
+                var output = Predict(input);
+                int predicted = Array.IndexOf(output, output.Max());
+
+                if (predicted == labels[i])
+                    correct++;
+
+                totalLoss += CrossEntropyLoss(output, labels[i]);
+            }
+
+            double accuracy = (double)correct / images.Length * 100;
+            double averageLoss = totalLoss / images.Length;
+
+            return (averageLoss, accuracy);
+        }
+
         public void Train(byte[][,] images, byte[] labels, int epochs, double learningRate, int batchSize, int logFrequency)
         {
             int totalBatches = (int)Math.Ceiling((double)images.Length / batchSize);
-            int imageCounter = 0; 
 
             for (int epoch = 1; epoch <= epochs; epoch++)
             {
-                Console.WriteLine($"Epoch {epoch}/{epochs}");
+                Console.WriteLine($"\nEpoch {epoch}/{epochs}");
                 double epochLoss = 0;
+                int epochCorrect = 0;
+
+                // Learning rate decay
+                double currentLearningRate = learningRate * (1.0 / (1.0 + 0.0001 * epoch));
+
+                // Shuffle training data
+                var indices = Enumerable.Range(0, images.Length).ToArray();
+                Random rng = new Random();
+                indices = indices.OrderBy(x => rng.Next()).ToArray();
 
                 Stopwatch stopwatch = Stopwatch.StartNew();
-
-                int processorCount = Environment.ProcessorCount;
-                int maxDegreeOfParallelism = Math.Max(1, processorCount - 2);
-                ParallelOptions parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism };
-
 
                 for (int batch = 0; batch < totalBatches; batch++)
                 {
                     int start = batch * batchSize;
                     int end = Math.Min(start + batchSize, images.Length);
+                    int currentBatchSize = end - start;
 
-                    var (batchImages, batchLabels) = _batchHelper.GetBatch(images, labels, start, end);
+                    double batchLoss = 0;
+                    int batchCorrect = 0;
 
-                    for (int i = 0; i < batchImages.Length; i++)
+                    // Process batch
+                    for (int i = start; i < end; i++)
                     {
-                        var input = BatchHelper.NormalizeImage(batchImages[i]);
+                        var input = BatchHelper.NormalizeImage(images[indices[i]]);
                         var target = new double[10];
-                        target[batchLabels[i]] = 1; // One-hot-Encoding für Labels
+                        target[labels[indices[i]]] = 1;
 
-                        var output = Predict(input);
-                        epochLoss += CrossEntropyLoss(output, batchLabels[i]);
+                        // Forward pass
+                        var current = input;
+                        for (int l = 0; l < layers.Count; l++)
+                        {
+                            current = layers[l].Forward(current);
+                            if (l == layers.Count - 1)
+                            {
+                                layers[l].ApplySoftmax();
+                                current = layers[l].Output;
+                            }
+                        }
 
-                        Backpropagate(input, target, learningRate);
+                        // Calculate accuracy and loss
+                        int predicted = Array.IndexOf(current, current.Max());
+                        if (predicted == labels[indices[i]])
+                            batchCorrect++;
 
-                        imageCounter++; // Increment the counter
-                    }                
+                        // Cross-entropy loss
+                        batchLoss -= Math.Log(current[labels[indices[i]]] + 1e-10);
+
+                        // Backward pass
+                        var error = layers[layers.Count - 1].BackwardOutput(target);
+                        for (int l = layers.Count - 2; l >= 0; l--)
+                        {
+                            error = layers[l].BackwardHidden(error, layers[l + 1].Weights);
+                        }
+
+                        // Update weights
+                        for (int l = 0; l < layers.Count; l++)
+                        {
+                            layers[l].UpdateWeights(currentLearningRate);
+                        }
+                    }
+
+                    epochLoss += batchLoss;
+                    epochCorrect += batchCorrect;
+
+                    if ((batch + 1) % logFrequency == 0)
+                    {
+                        double batchAccuracy = (double)batchCorrect / currentBatchSize * 100;
+                        Console.WriteLine($"Batch {batch + 1}/{totalBatches} - Loss: {batchLoss / currentBatchSize:F4}, Accuracy: {batchAccuracy:F2}%");
+                    }
                 }
-                stopwatch.Stop(); // Stop the stopwatch
 
-                Console.WriteLine($"Epoch {epoch} Complete - Avg Loss: {epochLoss / images.Length:F4} - Time: {stopwatch.Elapsed.TotalSeconds} seconds");
-                Console.WriteLine($"Total images processed: {imageCounter}");
+                stopwatch.Stop();
+
+                Console.WriteLine($"\nEpoch {epoch} Summary:");
+                Console.WriteLine($"Average Loss: {epochLoss / images.Length:F4}");
+                Console.WriteLine($"Training Accuracy: {(double)epochCorrect / images.Length * 100:F2}%");
+                Console.WriteLine($"Time: {stopwatch.Elapsed.TotalSeconds:F1} seconds");
             }
         }
-
     }
 }

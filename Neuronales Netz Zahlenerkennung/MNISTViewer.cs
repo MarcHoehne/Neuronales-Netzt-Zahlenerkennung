@@ -24,8 +24,6 @@ public class MNISTViewer
         const int inputSize = 14 * 14;
         const int outputSize = 10;
 
-        Layer layer = new Layer(inputSize, outputSize);
-
         neuralNetwork.Initialize(batchHelper);
         batchHelper.Initialize(neuralNetwork);
 
@@ -34,17 +32,34 @@ public class MNISTViewer
         var trainingData = MNISTReader.ReadTrainingData();
         var testData = MNISTReader.ReadTestData();
 
-        Console.WriteLine($"Number of training images: {trainingData.Images.Length}");
-        Console.WriteLine($"Number of test images: {testData.Images.Length}");
+        neuralNetwork.AddLayer(inputSize, 128);    // Erste Hidden Layer
+        neuralNetwork.AddLayer(128, 64);           // Zweite Hidden Layer
+        neuralNetwork.AddLayer(64, outputSize);     // Output Layer
 
+        // Load the weights if they exist
+        string weightsFile = "trained_weights20.01.1425.txt"; // Use a fixed name for consistency
+        if (File.Exists(weightsFile))
+        {
+            Console.WriteLine("Loading pre-trained weights...");
+            neuralNetwork.LoadWeights(weightsFile);
+            // In Main()
+            double accuracy = neuralNetwork.Evaluate(testData.Images, testData.Labels);
+            Console.WriteLine($"Final Model Accuracy: {accuracy:F2}%");
+        }
+        else
+        {
+            Console.WriteLine("No pre-trained weights found. Please train the network first.");
+            HandleWeightsAndTraining(neuralNetwork, trainingData, testData, weightsFile);
+            neuralNetwork.LoadWeights(weightsFile);
+            // In Main()
+            double accuracy = neuralNetwork.Evaluate(testData.Images, testData.Labels);
+            Console.WriteLine($"Final Model Accuracy: {accuracy:F2}%");
+        }
 
-        neuralNetwork.AddLayer(inputSize, 7 * 7);
-        neuralNetwork.AddLayer(7 * 7, outputSize);
-
-        const string weightsFile = "Weights.txt";
-
-        HandleWeightsAndTraining(neuralNetwork, trainingData, testData, weightsFile);
-
+        // Create and show the image viewer form
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        Application.Run(new MNISTImageViewer(neuralNetwork, testData));
     }
 
     private static void HandleWeightsAndTraining(NeuralNetwork neuralNetwork, (byte[][,] Images, byte[] Labels) trainingData, (byte[][,] Images, byte[] Labels) testData, string weightsFile)
@@ -84,7 +99,7 @@ public class MNISTViewer
             else if (input?.ToUpper() == "N")
             {
                 Console.WriteLine("Evaluating the model with the loaded weights...");
-                neuralNetwork.LoadWeights(weightsFile); 
+                neuralNetwork.LoadWeights(weightsFile);
 
                 double accuracy = neuralNetwork.Evaluate(testData.Images, testData.Labels);
                 Console.WriteLine($"Model Accuracy: {accuracy:F2}%");
@@ -103,7 +118,7 @@ public class MNISTViewer
             neuralNetwork.Train(
                 trainingData.Images,
                 trainingData.Labels,
-                epochs: 6,
+                epochs: 10,
                 learningRate: 0.01,
                 batchSize: 64,
                 logFrequency: 50
@@ -111,6 +126,7 @@ public class MNISTViewer
 
             Console.WriteLine("Saving weights to file...");
             neuralNetwork.SaveWeights(weightsFile);
+            Console.ReadLine();
         }
     }
 }

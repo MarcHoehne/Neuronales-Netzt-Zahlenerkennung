@@ -46,6 +46,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BatchHelper.cs" />
+    <Compile Include="MNISTImageViewer.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Kantendetektion.cs" />
     <Compile Include="MNISTReader.cs" />
     <Compile Include="MNISTViewer.cs" />
